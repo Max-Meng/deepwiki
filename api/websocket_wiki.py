@@ -16,6 +16,7 @@ from api.config import (
     OPENAI_API_KEY,
     AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY,
+    GITHUB_TOKEN,
 )
 from api.data_pipeline import count_tokens, get_file_content
 from api.bedrock_client import BedrockClient
@@ -23,6 +24,7 @@ from api.openai_client import OpenAIClient
 from api.openrouter_client import OpenRouterClient
 from api.azureai_client import AzureAIClient
 from api.dashscope_client import DashscopeClient
+from api.github_models_client import GitHubModelsClient
 from api.rag import RAG
 
 # Configure logging
@@ -50,7 +52,7 @@ class ChatCompletionRequest(BaseModel):
     # model parameters
     provider: str = Field(
         "google",
-        description="Model provider (google, openai, openrouter, ollama, bedrock, azure, dashscope)",
+        description="Model provider (google, openai, openrouter, ollama, bedrock, azure, dashscope, github)",
     )
     model: Optional[str] = Field(None, description="Model name for the specified provider")
 
@@ -505,6 +507,26 @@ This file contains...
                 model_kwargs=model_kwargs,
                 model_type=ModelType.LLM
             )
+        elif request.provider == "github":
+            logger.info(f"Using GitHub Models with model: {request.model}")
+
+            if not GITHUB_TOKEN:
+                logger.warning("GITHUB_TOKEN not configured, but continuing with request")
+
+            model = GitHubModelsClient()
+            model_kwargs = {
+                "model": request.model,
+                "stream": True,
+                "temperature": model_config["temperature"]
+            }
+            if "top_p" in model_config:
+                model_kwargs["top_p"] = model_config["top_p"]
+
+            api_kwargs = model.convert_inputs_to_api_kwargs(
+                input=prompt,
+                model_kwargs=model_kwargs,
+                model_type=ModelType.LLM
+            )
         elif request.provider == "bedrock":
             logger.info(f"Using AWS Bedrock with model: {request.model}")
 
@@ -639,6 +661,24 @@ This file contains...
                     error_msg = f"\nError with Openai API: {str(e_openai)}\n\nPlease check that you have set the OPENAI_API_KEY environment variable with a valid API key."
                     await websocket.send_text(error_msg)
                     # Close the WebSocket connection after sending the error message
+                    await websocket.close()
+            elif request.provider == "github":
+                try:
+                    logger.info("Making GitHub Models API call")
+                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
+                    async for chunk in response:
+                        choices = getattr(chunk, "choices", [])
+                        if len(choices) > 0:
+                            delta = getattr(choices[0], "delta", None)
+                            if delta is not None:
+                                text = getattr(delta, "content", None)
+                                if text is not None:
+                                    await websocket.send_text(text)
+                    await websocket.close()
+                except Exception as e_github:
+                    logger.error(f"Error with GitHub Models API: {str(e_github)}")
+                    error_msg = f"\nError with GitHub Models API: {str(e_github)}\n\nPlease check that you have set the GITHUB_TOKEN environment variable with a valid GitHub personal access token."
+                    await websocket.send_text(error_msg)
                     await websocket.close()
             elif request.provider == "bedrock":
                 try:

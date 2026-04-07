@@ -30,6 +30,15 @@
       "dimensions": 256
     }
   },
+  "embedder_github": {
+    "client_class": "GitHubModelsClient",
+    "batch_size": 100,
+    "model_kwargs": {
+      "model": "text-embedding-3-small",
+      "dimensions": 256,
+      "encoding_format": "float"
+    }
+  },
   "retriever": {
     "top_k": 20
   },
